@@ -125,7 +125,8 @@ int _ConvertSMVer2Cores(int major,int minor) {
     { 0x86, 128 }, // Ampere Generation (SM 8.6) GA10x class (RTX 30xx)
     { 0x87, 128 }, // Ampere Generation (SM 8.7) GA10x class (Jetson AGX Orin)
     { 0x89, 128 }, // Ada Lovelace Generation (SM 8.9) AD10x class (RTX 40xx/50xx)
-    { 0x90, 128 }, // Hopper Generation (SM 9.0) GH100 class (H100)
+    { 0x90, 128 }, // Hopper Generation (SM 9.0) GH100 class (H100/H200)
+    { 0xa0, 192 }, // Blackwell Generation (SM 10.0) GB100 class (B100/B200)
     { -1, -1 } };
 
   int index = 0;
