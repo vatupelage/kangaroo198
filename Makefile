@@ -44,10 +44,10 @@ CUDA       = /usr/local/cuda
 CXXCUDA    = /usr/bin/g++
 NVCC       = $(CUDA)/bin/nvcc
 
-# Default compute capabilities - supports Pascal through Hopper
+# Default compute capabilities - supports Pascal through Blackwell
 # Add/remove as needed for your GPU
 ifndef ccap
-COMPUTE_CAPABILITY = 60,61,70,75,80,86,89,90
+COMPUTE_CAPABILITY = 60,61,70,75,80,86,89,90,100
 else
 COMPUTE_CAPABILITY = $(ccap)
 endif
@@ -116,7 +116,8 @@ GENCODE_FLAGS = -gencode=arch=compute_60,code=sm_60 \
                 -gencode=arch=compute_86,code=sm_86 \
                 -gencode=arch=compute_89,code=sm_89 \
                 -gencode=arch=compute_90,code=sm_90 \
-                -gencode=arch=compute_90,code=compute_90
+                -gencode=arch=compute_100,code=sm_100 \
+                -gencode=arch=compute_100,code=compute_100
 endif
 
 # Common NVCC flags
