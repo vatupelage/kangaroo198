@@ -31,8 +31,7 @@ cuda_version.txt
 
 # Backup / temporary files
 *~
-*~
-*~
-
-
 *.bak
+
+# Claude workspace
+.claude/

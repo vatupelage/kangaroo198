@@ -23,7 +23,7 @@ __device__ void ComputeKangaroos(uint64_t *kangaroos,uint32_t maxFound,uint32_t 
 
   uint64_t px[GPU_GRP_SIZE][4];
   uint64_t py[GPU_GRP_SIZE][4];
-  uint64_t dist[GPU_GRP_SIZE][4];
+  uint64_t dist[GPU_GRP_SIZE][3];  // 192-bit for puzzle 135 optimization
 #ifdef USE_SYMMETRY
   uint64_t lastJump[GPU_GRP_SIZE];
 #endif
@@ -92,11 +92,11 @@ __device__ void ComputeKangaroos(uint64_t *kangaroos,uint32_t maxFound,uint32_t 
       Load256(px[g],rx);
       Load256(py[g],ry);
 
-      Add256(dist[g],jD[jmp]);
+      Add192(dist[g],jD[jmp]);  // 192-bit distance addition
 
 #ifdef USE_SYMMETRY
       if(ModPositive256(py[g]))
-        ModNeg256Order(dist[g]);
+        ModNeg192Order(dist[g]);  // 192-bit modular negation
 #endif
       uint64_t *pxg = px[g];
       if((pxg[0] & dpmask0) == 0 && (pxg[1] & dpmask1) == 0 && (pxg[2] & dpmask2) == 0 && (pxg[3] & dpmask3) == 0) {

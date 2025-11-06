@@ -419,17 +419,17 @@ void GPUEngine::SetKangaroos(Int *px,Int *py,Int *d) {
         inputKangarooPinned[g * strideSize + t + 6 * nbThreadPerGroup] = tpy.bits64[2];
         inputKangarooPinned[g * strideSize + t + 7 * nbThreadPerGroup] = tpy.bits64[3];
 
-        // Distance
+        // Distance (192-bit)
         Int dOff;
         dOff.Set(&d[idx]);
         if(idx % 2 == WILD) dOff.ModAddK1order(&wildOffset);
         inputKangarooPinned[g * strideSize + t + 8 * nbThreadPerGroup] = dOff.bits64[0];
         inputKangarooPinned[g * strideSize + t + 9 * nbThreadPerGroup] = dOff.bits64[1];
         inputKangarooPinned[g * strideSize + t + 10 * nbThreadPerGroup] = dOff.bits64[2];
-	inputKangarooPinned[g * strideSize + t + 11 * nbThreadPerGroup] = dOff.bits64[3];
+	// dOff.bits64[3] removed - using 192-bit distance
 #ifdef USE_SYMMETRY
-        // Last jump
-        inputKangarooPinned[t + 12 * nbThreadPerGroup] = (uint64_t)NB_JUMP;
+        // Last jump (adjusted index for 192-bit distance)
+        inputKangarooPinned[t + 11 * nbThreadPerGroup] = (uint64_t)NB_JUMP;
 #endif
 
         idx++;
@@ -486,13 +486,13 @@ void GPUEngine::GetKangaroos(Int *px,Int *py,Int *d) {
         py[idx].bits64[3] = inputKangarooPinned[g * strideSize + t + 7 * nbThreadPerGroup];
         py[idx].bits64[4] = 0;
 
-        // Distance
+        // Distance (192-bit)
         Int dOff;
         dOff.SetInt32(0);
         dOff.bits64[0] = inputKangarooPinned[g * strideSize + t + 8 * nbThreadPerGroup];
         dOff.bits64[1] = inputKangarooPinned[g * strideSize + t + 9 * nbThreadPerGroup];
         dOff.bits64[2] = inputKangarooPinned[g * strideSize + t + 10 * nbThreadPerGroup];
-        dOff.bits64[3] = inputKangarooPinned[g * strideSize + t + 11 * nbThreadPerGroup];
+        dOff.bits64[3] = 0;  // 192-bit distance - upper limb is zero
         if(idx % 2 == WILD) dOff.ModSubK1order(&wildOffset);
         d[idx].Set(&dOff);
 
@@ -539,7 +539,7 @@ void GPUEngine::SetKangaroo(uint64_t kIdx,Int *px,Int *py,Int *d) {
   inputKangarooPinned[0] = py->bits64[3];
   cudaMemcpy(inputKangaroo + (b * blockSize + g * strideSize + t + 7 * nbThreadPerGroup),inputKangarooPinned,8,cudaMemcpyHostToDevice);
 
-  // D
+  // D (192-bit distance)
   Int dOff;
   dOff.Set(d);
   if(kIdx % 2 == WILD) dOff.ModAddK1order(&wildOffset);
@@ -549,13 +549,12 @@ void GPUEngine::SetKangaroo(uint64_t kIdx,Int *px,Int *py,Int *d) {
   cudaMemcpy(inputKangaroo + (b * blockSize + g * strideSize + t + 9 * nbThreadPerGroup),inputKangarooPinned,8,cudaMemcpyHostToDevice);
   inputKangarooPinned[0] = dOff.bits64[2];
   cudaMemcpy(inputKangaroo + (b * blockSize + g * strideSize + t + 10 * nbThreadPerGroup),inputKangarooPinned,8,cudaMemcpyHostToDevice);
-  inputKangarooPinned[0] = dOff.bits64[3];
-  cudaMemcpy(inputKangaroo + (b * blockSize + g * strideSize + t + 11 * nbThreadPerGroup),inputKangarooPinned,8,cudaMemcpyHostToDevice);
+  // dOff.bits64[3] removed - using 192-bit distance
 
 #ifdef USE_SYMMETRY
-  // Last jump
+  // Last jump (adjusted index for 192-bit distance)
   inputKangarooPinned[0] = (uint64_t)NB_JUMP;
-  cudaMemcpy(inputKangaroo + (b * blockSize + g * strideSize + t + 12 * nbThreadPerGroup),inputKangarooPinned,8,cudaMemcpyHostToDevice);
+  cudaMemcpy(inputKangaroo + (b * blockSize + g * strideSize + t + 11 * nbThreadPerGroup),inputKangarooPinned,8,cudaMemcpyHostToDevice);
 #endif
 
 }
@@ -588,8 +587,8 @@ void GPUEngine::SetParams(Int *dpMask,Int *distance,Int *px,Int *py) {
   hostDpMask[3] = dpMask->bits64[3];
   cudaMemcpy(this->dpMask, hostDpMask, 32, cudaMemcpyHostToDevice);
   for(int i=0;i< NB_JUMP;i++)
-    memcpy(jumpPinned + 4*i,distance[i].bits64,32);
-  cudaMemcpyToSymbol(jD,jumpPinned,jumpSize);
+    memcpy(jumpPinned + 3*i,distance[i].bits64,24);  // 192-bit: 3 limbs * 8 bytes = 24
+  cudaMemcpyToSymbol(jD,jumpPinned,NB_JUMP * 24);
   cudaError_t err = cudaGetLastError();
   if(err != cudaSuccess) {
     printf("GPUEngine: SetParams: Failed to copy to constant memory (distance): %s\n",cudaGetErrorString(err));
@@ -681,7 +680,7 @@ bool GPUEngine::Launch(std::vector<ITEM> &hashFound,bool spinWait) {
     uint32_t *itemPtr = outputItemPinned + (i*ITEM_SIZE32 + 1);
     ITEM it;
 
-    it.kIdx = *((uint64_t*)(itemPtr + 16));
+    it.kIdx = *((uint64_t*)(itemPtr + 14));  // Adjusted for 192-bit distance
 
     uint64_t *x = (uint64_t *)itemPtr;
     it.x.bits64[0] = x[0];
@@ -694,7 +693,7 @@ bool GPUEngine::Launch(std::vector<ITEM> &hashFound,bool spinWait) {
     it.d.bits64[0] = d[0];
     it.d.bits64[1] = d[1];
     it.d.bits64[2] = d[2];
-    it.d.bits64[3] = d[3];
+    it.d.bits64[3] = 0;  // 192-bit distance - upper limb is zero
     it.d.bits64[4] = 0;
     if(it.kIdx % 2 == WILD) it.d.ModSubK1order(&wildOffset);
 
