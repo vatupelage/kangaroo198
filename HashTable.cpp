@@ -293,8 +293,7 @@ int HashTable::Add(uint64_t h,ENTRY* e) {
 	// Same point added twice or collision in the same herd!
 	return ADD_DUPLICATE;
       }
-      // Collision
-      ::printf("[DEBUG] Collision detected! e->kType=%u vs ent->kType=%u\n", e->kType, ent->kType);
+      // Collision detected between different herds
       kType = ent->kType;
       CalcDist(&(ent->d), &kDist);
       return ADD_COLLISION;

@@ -243,19 +243,26 @@ bool Kangaroo::Output(Int *pk,char sInfo,int sType) {
 
   Point PR = secp->ComputePublicKey(pk);
 
-  ::fprintf(f,"Key#%2d [%d%c]Pub:  0x%s \n",keyIdx,sType,sInfo,secp->GetPublicKeyHex(true,keysToSearch[keyIdx]).c_str());
+  // Always print to stdout for visibility
+  ::printf("Key# %d Pub:  0x%s \n",keyIdx,secp->GetPublicKeyHex(true,keysToSearch[keyIdx]).c_str());
   if(PR.equals(keysToSearch[keyIdx])) {
-    ::fprintf(f,"       Priv: 0x%s \n",pk->GetBase16().c_str());
+    ::printf("       Priv: 0x%s \n",pk->GetBase16().c_str());
   } else {
-    ::fprintf(f,"       Failed !\n");
+    ::printf("       Failed !\n");
     if(needToClose)
       fclose(f);
     return false;
   }
+  ::fflush(stdout);
 
-
-  if(needToClose)
+  // Also write to file if specified
+  if(needToClose) {
+    ::fprintf(f,"Key#%2d [%d%c]Pub:  0x%s \n",keyIdx,sType,sInfo,secp->GetPublicKeyHex(true,keysToSearch[keyIdx]).c_str());
+    if(PR.equals(keysToSearch[keyIdx])) {
+      ::fprintf(f,"       Priv: 0x%s \n",pk->GetBase16().c_str());
+    }
     fclose(f);
+  }
 
   return true;
 
