@@ -489,7 +489,7 @@ void Kangaroo::SolveKeyCPU(TH_PARAM *ph) {
 
     if( clientMode ) {
 
-      // Send DP to server
+      // Accumulate DPs locally (no lock needed)
       for(int g = 0; g < CPU_GRP_SIZE; g++) {
         if(IsDP(&ph->px[g])) {
           ITEM it;
@@ -501,7 +501,11 @@ void Kangaroo::SolveKeyCPU(TH_PARAM *ph) {
       }
 
       double now = Timer::get_tick();
-      if( now-lastSent > SEND_PERIOD ) {
+      // Send in larger batches (min 100 DPs or every 2 seconds, whichever comes first)
+      bool shouldSend = (now - lastSent > SEND_PERIOD) || (dps.size() >= 1000);
+
+      if(shouldSend && dps.size() > 0) {
+        // Only lock during the actual send
         LOCK(ghMutex);
         SendToServer(dps,ph->threadId,0xFFFF);
         UNLOCK(ghMutex);
@@ -633,11 +637,16 @@ void Kangaroo::SolveKeyGPU(TH_PARAM *ph) {
 
     if( clientMode ) {
 
+      // Accumulate DPs locally (no lock needed)
       for(int i=0;i<(int)gpuFound.size();i++)
         dps.push_back(gpuFound[i]);
 
       double now = Timer::get_tick();
-      if(now - lastSent > SEND_PERIOD) {
+      // Send in larger batches (min 100 DPs or every 2 seconds, whichever comes first)
+      bool shouldSend = (now - lastSent > SEND_PERIOD) || (dps.size() >= 1000);
+
+      if(shouldSend && dps.size() > 0) {
+        // Only lock during the actual send, not during accumulation
         LOCK(ghMutex);
         SendToServer(dps,ph->threadId,ph->gpuId);
         UNLOCK(ghMutex);
