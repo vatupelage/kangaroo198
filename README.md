@@ -46,7 +46,7 @@ Kangaroo [-v] [-t nbThread] [-d dpBit] [gpu] [-check]
  -s: Start in server mode
  -c server_ip: Start in client mode and connect to server server_ip
  -sp port: Server port, default is 17403
- -nt timeout: Network timeout in millisec (default is 3000ms)
+ -nt timeout: Network timeout in millisec (default is 30000ms for better reliability over internet connections)
  -o fileName: output result to fileName
  -l: List cuda enabled devices
  -check: Check GPU kernel vs CPU

@@ -660,7 +660,23 @@ void Kangaroo::AcceptConnections(SOCKET server_soc) {
       ::printf("Error: Invalid Socket returned by accept(): %s\n",GetNetworkError().c_str());
 
     } else {
-      
+
+      // Optimize socket buffers for accepted client connections
+      int sndbuf = 524288; // 512KB
+      if(setsockopt(clientSock,SOL_SOCKET,SO_SNDBUF,(char *)&sndbuf,sizeof(sndbuf)) == -1) {
+        ::printf("Warning: Cannot set SO_SNDBUF on client socket: %s\n",GetNetworkError().c_str());
+      }
+
+      int rcvbuf = 524288; // 512KB
+      if(setsockopt(clientSock,SOL_SOCKET,SO_RCVBUF,(char *)&rcvbuf,sizeof(rcvbuf)) == -1) {
+        ::printf("Warning: Cannot set SO_RCVBUF on client socket: %s\n",GetNetworkError().c_str());
+      }
+
+      int keepalive = 1;
+      if(setsockopt(clientSock,SOL_SOCKET,SO_KEEPALIVE,(char *)&keepalive,sizeof(keepalive)) == -1) {
+        ::printf("Warning: Cannot set SO_KEEPALIVE on client socket: %s\n",GetNetworkError().c_str());
+      }
+
       TH_PARAM *p = (TH_PARAM *)malloc(sizeof(TH_PARAM));
       ::memset(p,0,sizeof(TH_PARAM));
       char info[256];
@@ -874,6 +890,24 @@ bool Kangaroo::ConnectToServer(SOCKET *retSock) {
     lastError = "Socket error: setsockopt error SO_REUSEADDR";
     close_socket(sock);
     return false;
+  }
+
+  // Increase send buffer size to 512KB for better throughput over internet connections
+  int sndbuf = 524288; // 512KB
+  if(setsockopt(sock,SOL_SOCKET,SO_SNDBUF,(char *)&sndbuf,sizeof(sndbuf)) == -1) {
+    ::printf("Warning: Cannot set SO_SNDBUF: %s\n",GetNetworkError().c_str());
+  }
+
+  // Increase receive buffer size to 512KB
+  int rcvbuf = 524288; // 512KB
+  if(setsockopt(sock,SOL_SOCKET,SO_RCVBUF,(char *)&rcvbuf,sizeof(rcvbuf)) == -1) {
+    ::printf("Warning: Cannot set SO_RCVBUF: %s\n",GetNetworkError().c_str());
+  }
+
+  // Enable TCP keep-alive to detect stale connections
+  int keepalive = 1;
+  if(setsockopt(sock,SOL_SOCKET,SO_KEEPALIVE,(char *)&keepalive,sizeof(keepalive)) == -1) {
+    ::printf("Warning: Cannot set SO_KEEPALIVE: %s\n",GetNetworkError().c_str());
   }
 
   int flag = 1;
