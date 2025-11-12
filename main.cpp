@@ -57,7 +57,7 @@ void printUsage() {
   printf(" -s: Start in server mode\n");
   printf(" -c server_ip: Start in client mode and connect to server server_ip\n");
   printf(" -sp port: Server port, default is 17403\n");
-  printf(" -nt timeout: Network timeout in millisec (default is 3000ms)\n");
+  printf(" -nt timeout: Network timeout in millisec (default is 30000ms)\n");
   printf(" -o fileName: output result to fileName\n");
   printf(" -l: List cuda enabled devices\n");
   printf(" -check: Check GPU kernel vs CPU\n");
@@ -157,7 +157,7 @@ static string mergeDir = "";
 static string infoFile = "";
 static double maxStep = 0.0;
 static int wtimeout = 3000;
-static int ntimeout = 3000;
+static int ntimeout = 30000;  // Increased from 3000ms to 30000ms (30s) for internet connections
 static int port = 17403;
 static bool serverMode = false;
 static string serverIP = "";
