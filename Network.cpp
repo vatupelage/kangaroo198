@@ -1177,7 +1177,7 @@ bool Kangaroo::SendKangaroosToServer(std::string& fileName,std::vector<int256_t>
 
 }
 
-// Send DP to Server
+// Send DP to Server (Optimized with batching and reduced allocations)
 bool Kangaroo::SendToServer(std::vector<ITEM> &dps,uint32_t threadId,uint32_t gpuId) {
 
   int nbRead;
@@ -1192,8 +1192,29 @@ bool Kangaroo::SendToServer(std::vector<ITEM> &dps,uint32_t threadId,uint32_t gp
 
     int32_t status;
 
-    // Send DP
-    DP *dp = (DP *)malloc(sizeof(DP)*nbDP);
+    // Performance tracking
+    double t0 = Timer::get_tick();
+
+    // Pre-allocate send buffer to hold everything: cmd(1) + header(20) + DPs(72*nbDP)
+    size_t totalSize = 1 + sizeof(DPHEADER) + sizeof(DP)*nbDP;
+    char *sendBuffer = (char *)malloc(totalSize);
+    char *ptr = sendBuffer;
+
+    // Write command
+    *ptr = SERVER_SENDDP;
+    ptr += 1;
+
+    // Write header
+    DPHEADER *head = (DPHEADER *)ptr;
+    head->header = SERVER_HEADER;
+    head->nbDP = nbDP;
+    head->processId = pid;
+    head->threadId = threadId;
+    head->gpuId = gpuId;
+    ptr += sizeof(DPHEADER);
+
+    // Write DPs directly into buffer (zero extra copy)
+    DP *dp = (DP *)ptr;
     for(uint32_t i = 0; i<nbDP; i++) {
 
       int256_t X;
@@ -1212,22 +1233,43 @@ bool Kangaroo::SendToServer(std::vector<ITEM> &dps,uint32_t threadId,uint32_t gp
 
     }
 
-    char cmd = SERVER_SENDDP;
+    // Single write call for entire packet (cmd + header + DPs)
+    if((nbWrite = Write(serverConn,sendBuffer,totalSize,ntimeout)) < 0) {
+      ::printf("\nWriteError(SendDP): %s\n",lastError.c_str());
+      isConnected = false;
+      close_socket(serverConn);
+      free(sendBuffer);
+      return false;
+    }
 
-    DPHEADER head;
-    head.header = SERVER_HEADER;
-    head.nbDP = nbDP;
-    head.processId = pid;
-    head.threadId = threadId;
-    head.gpuId = gpuId;
-
-    PUTFREE("CMD",serverConn,&cmd,1,ntimeout,dp);
-    PUTFREE("DPHeader",serverConn,&head,sizeof(DPHEADER),ntimeout,dp);
-    PUTFREE("DP",serverConn,dp,sizeof(DP)*nbDP,ntimeout,dp);
-    GETFREE("Status",serverConn,&status,sizeof(uint32_t),ntimeout,dp)
+    // Get server status
+    if((nbRead = Read(serverConn,(char *)&status,sizeof(int32_t),ntimeout)) < 0) {
+      ::printf("\nReadError(Status): %s\n",lastError.c_str());
+      isConnected = false;
+      close_socket(serverConn);
+      free(sendBuffer);
+      return false;
+    }
 
     dps.clear();
-    free(dp);
+    free(sendBuffer);
+
+    // Performance logging (every ~100 sends)
+    static uint64_t sendCount = 0;
+    static double totalTime = 0.0;
+    static uint64_t totalDPs = 0;
+
+    double t1 = Timer::get_tick();
+    totalTime += (t1 - t0);
+    totalDPs += nbDP;
+    sendCount++;
+
+    if(sendCount % 100 == 0) {
+      double avgTime = totalTime / sendCount;
+      double avgBatch = (double)totalDPs / sendCount;
+      ::printf("\n[Network Stats] Avg send time: %.1fms | Avg batch: %.0f DPs | Total sent: %llu DPs\n",
+               avgTime * 1000.0, avgBatch, (unsigned long long)totalDPs);
+    }
 
   }
 
