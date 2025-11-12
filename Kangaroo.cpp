@@ -374,6 +374,7 @@ bool Kangaroo::AddToTable(int256_t *x,int256_t *d, uint32_t kType) {
   if(addStatus== ADD_COLLISION) {
 
     Int dist;
+    dist.SetInt32(0);  // Initialize all limbs to zero before copying
     HashTable::toInt(d,&dist);
     return CollisionCheck(&hashTable.kDist,hashTable.kType,&dist,kType);
 
