@@ -280,7 +280,7 @@ bool  Kangaroo::CheckKey(Int d1,Int d2,uint8_t type) {
     d2.ModNegK1order();
 
   Int pk(&d1);
-  pk.ModAddK1order(&d2);
+  pk.ModSubK1order(&d2);
 
   Point P = secp->ComputePublicKey(&pk);
 
