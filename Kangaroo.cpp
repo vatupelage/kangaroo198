@@ -791,8 +791,21 @@ void Kangaroo::NetworkThread() {
 
   uint64_t totalSent = 0;
   uint64_t batchCount = 0;
+  size_t lastQueueSize = 0;
+  bool highQueueWarned = false;
+
+  ::printf("\n[NetworkThread] Starting network thread (socket_fd=%d, batch_size=%u)\n",
+           serverConn, BATCH_SIZE);
 
   while(networkThreadRunning || !dpQueue.empty()) {
+
+    // Check for queue explosion (indicates network can't keep up)
+    size_t currentQueueSize = dpQueue.size();
+    if(currentQueueSize > 1000000 && !highQueueWarned) {
+      ::printf("\n[NetworkThread WARNING] DP queue very high: %zu DPs (network may be too slow)\n",
+               currentQueueSize);
+      highQueueWarned = true;
+    }
 
     // Wait for DPs from queue (timeout 1 second to check shutdown)
     if(!dpQueue.pop_batch(batch, threadIds, gpuIds, BATCH_SIZE, 1.0)) {
@@ -810,21 +823,25 @@ void Kangaroo::NetworkThread() {
       uint32_t threadId = threadIds[0];
       uint32_t gpuId = gpuIds[0];
 
+      // CRITICAL: Capture batch size BEFORE SendToServer clears it!
+      size_t batchSize = batch.size();
+
       // Send batch to server (this blocks, but GPU threads continue)
       if(SendToServer(batch, threadId, gpuId)) {
-        totalSent += batch.size();
+        totalSent += batchSize;  // Use captured size, not batch.size() which is now 0!
         batchCount++;
 
         // Periodic stats (every 100 batches)
         if(batchCount % 100 == 0) {
           size_t queueSize = dpQueue.size();
-          ::printf("\n[NetworkThread] Sent %llu DPs in %llu batches | Queue: %zu DPs\n",
-                   (unsigned long long)totalSent, (unsigned long long)batchCount, queueSize);
+          ::printf("\n[NetworkThread] Sent %llu DPs in %llu batches | Queue: %zu DPs (Avg: %.0f DPs/batch)\n",
+                   (unsigned long long)totalSent, (unsigned long long)batchCount, queueSize,
+                   (double)totalSent / batchCount);
         }
       } else {
         // Network error - connection lost
         // DPs are cleared by SendToServer, they will be regenerated
-        ::printf("\n[NetworkThread] Send failed, connection issue\n");
+        ::printf("\n[NetworkThread ERROR] Send failed for batch of %zu DPs - connection issue\n", batchSize);
       }
 
       // Clear for next batch

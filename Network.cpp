@@ -186,8 +186,16 @@ int Kangaroo::Write(SOCKET sock,char *buf,int bufsize,int timeout) {
     return -1;
   }
 
+  // If written == 0, the socket was closed by peer
+  if(written == 0 && bufsize > 0) {
+    lastError = "Socket closed by peer during write";
+    return -1;
+  }
+
   if(bufsize != 0) {
-    lastError = "Failed to send entire buffer";
+    char err[256];
+    sprintf(err, "Failed to send entire buffer (sent %d, remaining %d)", total_written, bufsize);
+    lastError = err;
     return -1;
   }
 
@@ -1186,6 +1194,13 @@ bool Kangaroo::SendToServer(std::vector<ITEM> &dps,uint32_t threadId,uint32_t gp
   if(dps.size()==0)
     return false;
 
+  // Verify connection state before attempting to send
+  if(!isConnected) {
+    ::printf("\n[SendToServer ERROR] Not connected to server (isConnected=false)\n");
+    dps.clear();
+    return false;
+  }
+
   WaitForServer();
 
   if(!endOfSearch) {
@@ -1235,7 +1250,18 @@ bool Kangaroo::SendToServer(std::vector<ITEM> &dps,uint32_t threadId,uint32_t gp
 
     // Single write call for entire packet (cmd + header + DPs)
     if((nbWrite = Write(serverConn,sendBuffer,totalSize,ntimeout)) < 0) {
-      ::printf("\nWriteError(SendDP): %s\n",lastError.c_str());
+      ::printf("\n[SendToServer ERROR] Write failed for %u DPs (%zu bytes): %s\n",
+               nbDP, totalSize, lastError.c_str());
+      isConnected = false;
+      close_socket(serverConn);
+      free(sendBuffer);
+      return false;
+    }
+
+    // Verify we sent the entire packet
+    if((size_t)nbWrite != totalSize) {
+      ::printf("\n[SendToServer ERROR] Partial write: sent %d of %zu bytes (missing %zu bytes) for %u DPs\n",
+               nbWrite, totalSize, totalSize - nbWrite, nbDP);
       isConnected = false;
       close_socket(serverConn);
       free(sendBuffer);
@@ -1244,11 +1270,33 @@ bool Kangaroo::SendToServer(std::vector<ITEM> &dps,uint32_t threadId,uint32_t gp
 
     // Get server status
     if((nbRead = Read(serverConn,(char *)&status,sizeof(int32_t),ntimeout)) < 0) {
-      ::printf("\nReadError(Status): %s\n",lastError.c_str());
+      ::printf("\n[SendToServer ERROR] Read status failed after sending %u DPs: %s\n",
+               nbDP, lastError.c_str());
       isConnected = false;
       close_socket(serverConn);
       free(sendBuffer);
       return false;
+    }
+
+    // Verify we got the full status response
+    if(nbRead != sizeof(int32_t)) {
+      ::printf("\n[SendToServer ERROR] Partial status read: got %d of %zu bytes\n",
+               nbRead, sizeof(int32_t));
+      isConnected = false;
+      close_socket(serverConn);
+      free(sendBuffer);
+      return false;
+    }
+
+    // Check server status response
+    if(status == SERVER_END) {
+      ::printf("\n[SendToServer] Server reports search ended (collision found)\n");
+      endOfSearch = true;
+    } else if(status == SERVER_BACKUP) {
+      ::printf("\n[SendToServer] Server is performing backup, DPs may be queued\n");
+    } else if(status != SERVER_OK) {
+      ::printf("\n[SendToServer WARNING] Unexpected server status: %d (expected %d=OK, %d=END, %d=BACKUP)\n",
+               status, SERVER_OK, SERVER_END, SERVER_BACKUP);
     }
 
     dps.clear();
@@ -1258,17 +1306,29 @@ bool Kangaroo::SendToServer(std::vector<ITEM> &dps,uint32_t threadId,uint32_t gp
     static uint64_t sendCount = 0;
     static double totalTime = 0.0;
     static uint64_t totalDPs = 0;
+    static uint64_t totalBytes = 0;
 
     double t1 = Timer::get_tick();
-    totalTime += (t1 - t0);
+    double sendTime = (t1 - t0);
+    totalTime += sendTime;
     totalDPs += nbDP;
+    totalBytes += totalSize;
     sendCount++;
 
+    // Log every successful send for detailed tracking
     if(sendCount % 100 == 0) {
       double avgTime = totalTime / sendCount;
       double avgBatch = (double)totalDPs / sendCount;
-      ::printf("\n[Network Stats] Avg send time: %.1fms | Avg batch: %.0f DPs | Total sent: %llu DPs\n",
-               avgTime * 1000.0, avgBatch, (unsigned long long)totalDPs);
+      double avgBytes = (double)totalBytes / sendCount;
+      ::printf("\n[Network Stats] Sends: %llu | Avg time: %.1fms | Avg batch: %.0f DPs (%.0f bytes) | Total: %llu DPs (%llu bytes)\n",
+               (unsigned long long)sendCount, avgTime * 1000.0, avgBatch, avgBytes,
+               (unsigned long long)totalDPs, (unsigned long long)totalBytes);
+    }
+
+    // Detailed logging for very slow sends (>500ms is a problem)
+    if(sendTime > 0.5) {
+      ::printf("\n[Network WARNING] Slow send detected: %.1fms for %u DPs (%zu bytes)\n",
+               sendTime * 1000.0, nbDP, totalSize);
     }
 
   }
