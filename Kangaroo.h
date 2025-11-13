@@ -42,6 +42,7 @@ typedef int SOCKET;
 #include "HashTable.h"
 #include "SECPK1/IntGroup.h"
 #include "GPU/GPUEngine.h"
+#include "DPQueue.h"
 
 #ifdef WIN64
 typedef HANDLE THREAD_HANDLE;
@@ -152,6 +153,7 @@ public:
   bool CheckPartition(TH_PARAM* p);
   bool CheckWorkFile(TH_PARAM* p);
   void ProcessServer();
+  void NetworkThread();
 
   void AddConnectedClient();
   void RemoveConnectedClient();
@@ -295,6 +297,11 @@ private:
   std::string serverStatus;
   int connectedClient;
   uint32_t pid;
+
+  // Async network architecture
+  DPQueue dpQueue;
+  THREAD_HANDLE networkThreadHandle;
+  bool networkThreadRunning;
 
 };
 
