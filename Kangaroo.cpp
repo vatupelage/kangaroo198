@@ -613,6 +613,12 @@ void Kangaroo::SolveKeyGPU(TH_PARAM *ph) {
     }
 
     for(uint64_t i = 0; i<nbThread; i++) {
+      if(keyIdx == 0 && i % 10000 == 0 && i > 0) {
+        ::printf("DEBUG: GPU#%d - Created %llu/%llu herds (%.1f%%)\n",
+                 ph->gpuId, (unsigned long long)i, (unsigned long long)nbThread,
+                 (i * 100.0) / nbThread);
+        ::fflush(stdout);
+      }
       CreateHerd(GPU_GRP_SIZE,&(ph->px[i*GPU_GRP_SIZE]),
                               &(ph->py[i*GPU_GRP_SIZE]),
                               &(ph->distance[i*GPU_GRP_SIZE]),
@@ -620,7 +626,7 @@ void Kangaroo::SolveKeyGPU(TH_PARAM *ph) {
     }
 
     if(keyIdx == 0) {
-      ::printf("DEBUG: GPU#%d - Herds created successfully\n", ph->gpuId);
+      ::printf("DEBUG: GPU#%d - All %llu herds created successfully!\n", ph->gpuId, (unsigned long long)nbThread);
       ::fflush(stdout);
     }
   }
@@ -660,15 +666,27 @@ void Kangaroo::SolveKeyGPU(TH_PARAM *ph) {
 
   gpu->callKernel();
 
+  if(keyIdx == 0) {
+    ::printf("DEBUG: GPU#%d - GPU kernel initialization completed\n", ph->gpuId);
+    ::fflush(stdout);
+  }
+
   double t1 = Timer::get_tick();
 
   if(keyIdx == 0) {
-    ::printf("DEBUG: GPU#%d - Kernel call completed\n", ph->gpuId);
+    ::printf("DEBUG: GPU#%d - GPU initialization COMPLETE!\n", ph->gpuId);
     ::printf("SolveKeyGPU Thread GPU#%d: 2^%.2f kangaroos [%.1fs]\n",ph->gpuId,log2((double)ph->nbKangaroo),(t1-t0));
     ::fflush(stdout);
   }
 
+  // CRITICAL: Set hasStarted ONLY after ALL GPU initialization is complete
+  // This signals to the main thread that it's safe to start the network thread
   ph->hasStarted = true;
+
+  if(keyIdx == 0) {
+    ::printf("DEBUG: GPU#%d - Set hasStarted=true, GPU is ready for operation\n", ph->gpuId);
+    ::fflush(stdout);
+  }
 
   while(!endOfSearch) {
 
@@ -1217,10 +1235,42 @@ void Kangaroo::Run(int nbThread,std::vector<int> gpuId,std::vector<int> gridSize
 
 #endif
 
-      // Start async network thread AFTER all worker threads are launched
-      // This prevents race conditions during GPU initialization
-      if( clientMode ) {
-        ::printf("Starting async network thread for GPU performance...\n");
+      // CRITICAL: Wait for GPU initialization to complete before starting network thread
+      // The network thread MUST NOT start until all GPU threads have finished initialization
+      if( clientMode && nbGPUThread > 0 ) {
+        ::printf("Waiting for GPU initialization to complete before starting network thread...\n");
+
+        // Wait for ALL GPU threads to complete initialization (hasStarted = true)
+        bool allGPUReady = false;
+        int waitCount = 0;
+        while(!allGPUReady && !endOfSearch) {
+          allGPUReady = true;
+          for(int i = 0; i < nbGPUThread; i++) {
+            int id = nbCPUThread + i;
+            if(!params[id].hasStarted) {
+              allGPUReady = false;
+              break;
+            }
+          }
+
+          if(!allGPUReady) {
+            Timer::SleepMillis(100);  // Check every 100ms
+            waitCount++;
+            if(waitCount % 10 == 0) {  // Print status every 1 second
+              ::printf("Still waiting for GPU initialization... (%d seconds)\n", waitCount / 10);
+            }
+          }
+        }
+
+        if(!endOfSearch) {
+          ::printf("GPU initialization complete! Now starting network thread...\n");
+          networkThreadRunning = true;
+          networkThreadHandle = LaunchThread(_NetworkThread, (TH_PARAM *)this);
+          ::printf("NetworkThread: Started async DP transmission thread\n");
+        }
+      } else if( clientMode && nbGPUThread == 0 ) {
+        // CPU-only mode: start network thread immediately
+        ::printf("Starting async network thread (CPU-only mode)...\n");
         networkThreadRunning = true;
         networkThreadHandle = LaunchThread(_NetworkThread, (TH_PARAM *)this);
         ::printf("NetworkThread: Started async DP transmission thread\n");
