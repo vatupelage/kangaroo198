@@ -575,22 +575,42 @@ void Kangaroo::SolveKeyGPU(TH_PARAM *ph) {
   vector<ITEM> gpuFound;
   GPUEngine *gpu;
 
+  if(keyIdx == 0) {
+    ::printf("DEBUG: GPU#%d - Creating GPUEngine...\n", ph->gpuId);
+    ::fflush(stdout);
+  }
+
   gpu = new GPUEngine(ph->gridSizeX,ph->gridSizeY,ph->gpuId,65536 * 2);
 
-  if(keyIdx == 0)
+  if(keyIdx == 0) {
     ::printf("GPU: %s (%.1f MB used)\n",gpu->deviceName.c_str(),gpu->GetMemory() / 1048576.0);
+    ::fflush(stdout);
+  }
 
   double t0 = Timer::get_tick();
 
 
   if( ph->px==NULL ) {
-    if(keyIdx == 0)
+    if(keyIdx == 0) {
       ::printf("SolveKeyGPU Thread GPU#%d: creating kangaroos...\n",ph->gpuId);
+      ::fflush(stdout);
+    }
     // Create Kangaroos, if not already loaded
     uint64_t nbThread = gpu->GetNbThread();
+
+    if(keyIdx == 0) {
+      ::printf("DEBUG: GPU#%d - Allocating memory for %llu kangaroos...\n", ph->gpuId, (unsigned long long)ph->nbKangaroo);
+      ::fflush(stdout);
+    }
+
     ph->px = new Int[ph->nbKangaroo];
     ph->py = new Int[ph->nbKangaroo];
     ph->distance = new Int[ph->nbKangaroo];
+
+    if(keyIdx == 0) {
+      ::printf("DEBUG: GPU#%d - Creating %llu herds...\n", ph->gpuId, (unsigned long long)nbThread);
+      ::fflush(stdout);
+    }
 
     for(uint64_t i = 0; i<nbThread; i++) {
       CreateHerd(GPU_GRP_SIZE,&(ph->px[i*GPU_GRP_SIZE]),
@@ -598,6 +618,16 @@ void Kangaroo::SolveKeyGPU(TH_PARAM *ph) {
                               &(ph->distance[i*GPU_GRP_SIZE]),
                               TAME);
     }
+
+    if(keyIdx == 0) {
+      ::printf("DEBUG: GPU#%d - Herds created successfully\n", ph->gpuId);
+      ::fflush(stdout);
+    }
+  }
+
+  if(keyIdx == 0) {
+    ::printf("DEBUG: GPU#%d - Setting GPU parameters...\n", ph->gpuId);
+    ::fflush(stdout);
   }
 
 #ifdef USE_SYMMETRY
@@ -608,6 +638,12 @@ void Kangaroo::SolveKeyGPU(TH_PARAM *ph) {
   Int dmaskInt;
   HashTable::toInt(&dMask, &dmaskInt);
   gpu->SetParams(&dmaskInt,jumpDistance,jumpPointx,jumpPointy);
+
+  if(keyIdx == 0) {
+    ::printf("DEBUG: GPU#%d - Setting kangaroos on GPU...\n", ph->gpuId);
+    ::fflush(stdout);
+  }
+
   gpu->SetKangaroos(ph->px,ph->py,ph->distance);
 
   if(workFile.length()==0 || !saveKangaroo) {
@@ -617,12 +653,20 @@ void Kangaroo::SolveKeyGPU(TH_PARAM *ph) {
     safe_delete_array(ph->distance);
   }
 
+  if(keyIdx == 0) {
+    ::printf("DEBUG: GPU#%d - Calling GPU kernel for initialization...\n", ph->gpuId);
+    ::fflush(stdout);
+  }
+
   gpu->callKernel();
 
   double t1 = Timer::get_tick();
 
-  if(keyIdx == 0)
+  if(keyIdx == 0) {
+    ::printf("DEBUG: GPU#%d - Kernel call completed\n", ph->gpuId);
     ::printf("SolveKeyGPU Thread GPU#%d: 2^%.2f kangaroos [%.1fs]\n",ph->gpuId,log2((double)ph->nbKangaroo),(t1-t0));
+    ::fflush(stdout);
+  }
 
   ph->hasStarted = true;
 
@@ -721,8 +765,6 @@ void *_SolveKeyGPU(void *lpParam) {
 
 // Network thread - handles all DP transmission asynchronously
 void Kangaroo::NetworkThread() {
-
-  ::printf("NetworkThread: Started async DP transmission thread\n");
 
   std::vector<ITEM> batch;
   std::vector<uint32_t> threadIds;
@@ -1092,10 +1134,9 @@ void Kangaroo::Run(int nbThread,std::vector<int> gpuId,std::vector<int> gridSize
     if(workFile.length()>0)
       saveKangaroo = true;
 
-    // Start async network thread for non-blocking DP transmission
-    ::printf("Starting async network thread for GPU performance...\n");
-    networkThreadRunning = true;
-    networkThreadHandle = LaunchThread(_NetworkThread, (TH_PARAM *)this);
+    // IMPORTANT: Network thread will be started AFTER GPU initialization
+    // to avoid race conditions during GPU setup
+    ::printf("Will start network thread after GPU initialization completes...\n");
   }
 
   InitRange();
@@ -1176,6 +1217,14 @@ void Kangaroo::Run(int nbThread,std::vector<int> gpuId,std::vector<int> gridSize
 
 #endif
 
+      // Start async network thread AFTER all worker threads are launched
+      // This prevents race conditions during GPU initialization
+      if( clientMode ) {
+        ::printf("Starting async network thread for GPU performance...\n");
+        networkThreadRunning = true;
+        networkThreadHandle = LaunchThread(_NetworkThread, (TH_PARAM *)this);
+        ::printf("NetworkThread: Started async DP transmission thread\n");
+      }
 
       // Wait for end
       Process(params,"MK/s");
