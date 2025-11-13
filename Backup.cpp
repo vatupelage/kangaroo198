@@ -430,8 +430,14 @@ void Kangaroo::SaveServerWork() {
   uint64_t size = FTell(f);
   fclose(f);
 
-  if(splitWorkfile)
-    hashTable.Reset();
+  // CRITICAL: SaveServerWork() is ONLY called in server mode
+  // Do NOT reset hashtable - server needs to keep DPs for collision detection
+  // The -wsplit flag should be blocked by main.cpp validation, but as a safeguard:
+  if(splitWorkfile) {
+    ::printf("\nWARNING: -wsplit detected in server mode - NOT resetting hashtable!\n");
+    ::printf("         Server must keep DPs in memory for collision detection.\n");
+    // Do NOT call hashTable.Reset() in server mode
+  }
 
   double t1 = Timer::get_tick();
 
