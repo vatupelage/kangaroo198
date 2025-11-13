@@ -64,6 +64,7 @@ Kangaroo::Kangaroo(Secp256K1 *secp,int32_t initDPSize,bool useGpu,string &workFi
   this->keyIdx = 0;
   this->splitWorkfile = splitWorkfile;
   this->pid = Timer::getPID();
+  this->networkThreadRunning = false;
 
   CPU_GRP_SIZE = 1024;
 
@@ -489,7 +490,7 @@ void Kangaroo::SolveKeyCPU(TH_PARAM *ph) {
 
     if( clientMode ) {
 
-      // Accumulate DPs locally (no lock needed)
+      // Accumulate DPs locally
       for(int g = 0; g < CPU_GRP_SIZE; g++) {
         if(IsDP(&ph->px[g])) {
           ITEM it;
@@ -500,16 +501,11 @@ void Kangaroo::SolveKeyCPU(TH_PARAM *ph) {
         }
       }
 
-      double now = Timer::get_tick();
-      // Send in larger batches (min 100 DPs or every 2 seconds, whichever comes first)
-      bool shouldSend = (now - lastSent > SEND_PERIOD) || (dps.size() >= 1000);
-
-      if(shouldSend && dps.size() > 0) {
-        // Only lock during the actual send
-        LOCK(ghMutex);
-        SendToServer(dps,ph->threadId,0xFFFF);
-        UNLOCK(ghMutex);
-        lastSent = now;
+      // Push batch to async queue periodically (non-blocking, instant!)
+      // Network thread handles actual transmission in parallel
+      if(dps.size() >= 1000) {
+        dpQueue.push_batch(dps, ph->threadId, 0xFFFF);
+        dps.clear();
       }
 
       if(!endOfSearch) counters[thId] += CPU_GRP_SIZE;
@@ -637,20 +633,10 @@ void Kangaroo::SolveKeyGPU(TH_PARAM *ph) {
 
     if( clientMode ) {
 
-      // Accumulate DPs locally (no lock needed)
-      for(int i=0;i<(int)gpuFound.size();i++)
-        dps.push_back(gpuFound[i]);
-
-      double now = Timer::get_tick();
-      // Send in larger batches (min 100 DPs or every 2 seconds, whichever comes first)
-      bool shouldSend = (now - lastSent > SEND_PERIOD) || (dps.size() >= 1000);
-
-      if(shouldSend && dps.size() > 0) {
-        // Only lock during the actual send, not during accumulation
-        LOCK(ghMutex);
-        SendToServer(dps,ph->threadId,ph->gpuId);
-        UNLOCK(ghMutex);
-        lastSent = now;
+      // Push DPs to async queue (non-blocking, instant!)
+      // Network thread handles actual transmission in parallel
+      if(gpuFound.size() > 0) {
+        dpQueue.push_batch(gpuFound, ph->threadId, ph->gpuId);
       }
 
     } else {
@@ -728,6 +714,77 @@ void *_SolveKeyGPU(void *lpParam) {
 #endif
   TH_PARAM *p = (TH_PARAM *)lpParam;
   p->obj->SolveKeyGPU(p);
+  return 0;
+}
+
+// ----------------------------------------------------------------------------
+
+// Network thread - handles all DP transmission asynchronously
+void Kangaroo::NetworkThread() {
+
+  ::printf("NetworkThread: Started async DP transmission thread\n");
+
+  std::vector<ITEM> batch;
+  std::vector<uint32_t> threadIds;
+  std::vector<uint32_t> gpuIds;
+  const uint32_t BATCH_SIZE = 1000; // Send up to 1000 DPs per packet
+
+  uint64_t totalSent = 0;
+  uint64_t batchCount = 0;
+
+  while(networkThreadRunning || !dpQueue.empty()) {
+
+    // Wait for DPs from queue (timeout 1 second to check shutdown)
+    if(!dpQueue.pop_batch(batch, threadIds, gpuIds, BATCH_SIZE, 1.0)) {
+      // Timeout or empty queue, check if we should continue
+      if(!networkThreadRunning && dpQueue.empty())
+        break;
+      continue;
+    }
+
+    // We have DPs to send
+    if(!batch.empty()) {
+
+      // Use the thread/gpu ID from the first DP in the batch
+      // (all DPs in batch typically come from same source, but we use first)
+      uint32_t threadId = threadIds[0];
+      uint32_t gpuId = gpuIds[0];
+
+      // Send batch to server (this blocks, but GPU threads continue)
+      if(SendToServer(batch, threadId, gpuId)) {
+        totalSent += batch.size();
+        batchCount++;
+
+        // Periodic stats (every 100 batches)
+        if(batchCount % 100 == 0) {
+          size_t queueSize = dpQueue.size();
+          ::printf("\n[NetworkThread] Sent %llu DPs in %llu batches | Queue: %zu DPs\n",
+                   (unsigned long long)totalSent, (unsigned long long)batchCount, queueSize);
+        }
+      } else {
+        // Network error - connection lost
+        // DPs are cleared by SendToServer, they will be regenerated
+        ::printf("\n[NetworkThread] Send failed, connection issue\n");
+      }
+
+      // Clear for next batch
+      batch.clear();
+      threadIds.clear();
+      gpuIds.clear();
+    }
+  }
+
+  ::printf("\n[NetworkThread] Shutting down. Total sent: %llu DPs in %llu batches\n",
+           (unsigned long long)totalSent, (unsigned long long)batchCount);
+}
+
+#ifdef WIN64
+DWORD WINAPI _NetworkThread(LPVOID lpParam) {
+#else
+void *_NetworkThread(void *lpParam) {
+#endif
+  Kangaroo *obj = (Kangaroo *)lpParam;
+  obj->NetworkThread();
   return 0;
 }
 
@@ -1034,6 +1091,11 @@ void Kangaroo::Run(int nbThread,std::vector<int> gpuId,std::vector<int> gridSize
     // Client save only kangaroos, force -ws
     if(workFile.length()>0)
       saveKangaroo = true;
+
+    // Start async network thread for non-blocking DP transmission
+    ::printf("Starting async network thread for GPU performance...\n");
+    networkThreadRunning = true;
+    networkThreadHandle = LaunchThread(_NetworkThread, (TH_PARAM *)this);
   }
 
   InitRange();
@@ -1119,6 +1181,23 @@ void Kangaroo::Run(int nbThread,std::vector<int> gpuId,std::vector<int> gridSize
       Process(params,"MK/s");
       JoinThreads(thHandles,nbCPUThread + nbGPUThread);
       FreeHandles(thHandles,nbCPUThread + nbGPUThread);
+
+      // Shutdown network thread if in client mode
+      if(clientMode && networkThreadRunning) {
+        ::printf("Shutting down network thread...\n");
+        networkThreadRunning = false;
+        dpQueue.requestShutdown();
+
+        // Wait for network thread to finish sending remaining DPs
+#ifdef WIN64
+        WaitForSingleObject(networkThreadHandle, INFINITE);
+        CloseHandle(networkThreadHandle);
+#else
+        pthread_join(networkThreadHandle, NULL);
+#endif
+        ::printf("Network thread stopped.\n");
+      }
+
       hashTable.Reset();
 
 #ifdef STATS
