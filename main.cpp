@@ -356,8 +356,19 @@ int main(int argc, char* argv[]) {
         exit(-1);
       }
     }
-    if(serverMode)
+    if(serverMode) {
+      // CRITICAL: -wsplit is incompatible with server mode
+      // It causes hashTable.Reset() which DELETES all DPs from memory
+      // This prevents collision detection and causes DP count to decrease
+      if(splitWorkFile) {
+        ::printf("ERROR: -wsplit is incompatible with server mode!\n");
+        ::printf("  -wsplit calls hashTable.Reset() after saving, which DELETES all DPs.\n");
+        ::printf("  This prevents collision detection and causes DP count to decrease.\n");
+        ::printf("  Use -wi for periodic saves WITHOUT -wsplit, or use -ws to save work on exit only.\n");
+        exit(-1);
+      }
       v->RunServer();
+    }
     else
       v->Run(nbCPUThread,gpuId,gridSize);
   }

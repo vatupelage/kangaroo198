@@ -503,7 +503,8 @@ void Kangaroo::SolveKeyCPU(TH_PARAM *ph) {
 
       // Push batch to async queue periodically (non-blocking, instant!)
       // Network thread handles actual transmission in parallel
-      if(dps.size() >= 1000) {
+      // Increased threshold to 10000 to match network thread batch size
+      if(dps.size() >= 10000) {
         dpQueue.push_batch(dps, ph->threadId, 0xFFFF);
         dps.clear();
       }
@@ -787,7 +788,7 @@ void Kangaroo::NetworkThread() {
   std::vector<ITEM> batch;
   std::vector<uint32_t> threadIds;
   std::vector<uint32_t> gpuIds;
-  const uint32_t BATCH_SIZE = 1000; // Send up to 1000 DPs per packet
+  const uint32_t BATCH_SIZE = 10000; // Send up to 10000 DPs per packet (increased from 1000 to reduce overhead)
 
   uint64_t totalSent = 0;
   uint64_t batchCount = 0;
