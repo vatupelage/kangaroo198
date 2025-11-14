@@ -237,7 +237,7 @@ void Kangaroo::ProcessServer() {
 
     t1 = Timer::get_tick();
 
-    if(!endOfSearch)
+    if(!endOfSearch) {
       printf("\r[Client %d][Kang 2^%.2f][DP Count 2^%.2f/2^%.2f][Dead %.0f][%s][%s]  ",
         connectedClient,
         log2((double)totalRW),
@@ -247,6 +247,27 @@ void Kangaroo::ProcessServer() {
         GetTimeStr(t1 - startTime).c_str(),
         hashTable.GetSizeInfo().c_str()
         );
+
+      // Print detailed statistics every 10 seconds
+      static double lastDetailedPrint = 0;
+      if((t1 - lastDetailedPrint) > 10.0) {
+        ::printf("\n[Server STATS] Total DPs processed: %llu (TAME: %llu, WILD: %llu)",
+                 (unsigned long long)totalDPsProcessed,
+                 (unsigned long long)tameDPs,
+                 (unsigned long long)wildDPs);
+        ::printf("\n[Server STATS] Hash table entries: %llu, Same-herd collisions: %.0f",
+                 (unsigned long long)hashTable.GetNbItem(),
+                 (double)collisionInSameHerd);
+        if(totalDPsProcessed > 0) {
+          double tamePercent = 100.0 * tameDPs / totalDPsProcessed;
+          double wildPercent = 100.0 * wildDPs / totalDPsProcessed;
+          ::printf("\n[Server STATS] Distribution: TAME=%.1f%%, WILD=%.1f%%",
+                   tamePercent, wildPercent);
+        }
+        ::printf("\n");
+        lastDetailedPrint = t1;
+      }
+    }
 
     if(workFile.length() > 0 && !endOfSearch) {
       if((t1 - lastSave) > saveWorkPeriod) {

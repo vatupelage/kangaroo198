@@ -244,8 +244,32 @@ void HashTable::ReAllocate(uint64_t h,uint32_t add) {
 
 int HashTable::Add(int256_t *x,int256_t *d, uint32_t type) {
   uint64_t h = (x->i64[0] ^ x->i64[1] ^ x->i64[2] ^ x->i64[3]) % HASH_SIZE;
+
+  static uint64_t addCallCount = 0;
+  addCallCount++;
+
+  if(addCallCount <= 20 || addCallCount % 50 == 0) {
+    ::printf("\n[HashTable::Add #%llu] type=%u (%s), hash=%llu, x=%016llX%016llX...",
+             (unsigned long long)addCallCount,
+             type, type == 0 ? "TAME" : "WILD",
+             (unsigned long long)h,
+             (unsigned long long)x->i64[3],
+             (unsigned long long)x->i64[2]);
+    ::printf("\n[HashTable::Add #%llu] Bucket has %u items currently",
+             (unsigned long long)addCallCount,
+             E[h].nbItem);
+  }
+
   ENTRY *e = CreateEntry(x,d,type);
-  return Add(h,e);
+  int result = Add(h,e);
+
+  if(addCallCount <= 20 || addCallCount % 50 == 0) {
+    ::printf("\n[HashTable::Add #%llu] Result: %s",
+             (unsigned long long)addCallCount,
+             result == ADD_OK ? "ADD_OK" : (result == ADD_DUPLICATE ? "ADD_DUPLICATE" : "ADD_COLLISION"));
+  }
+
+  return result;
 
 }
 
@@ -255,12 +279,19 @@ void HashTable::CalcDist(int256_t *d,Int* kDist) {
 }
 
 int HashTable::Add(uint64_t h,ENTRY* e) {
+  static uint64_t lowLevelAddCount = 0;
+  lowLevelAddCount++;
+
   if(E[h].maxItem == 0) {
     E[h].maxItem = 16;
     E[h].items = (ENTRY **)malloc(sizeof(ENTRY *) * E[h].maxItem);
   }
 
   if(E[h].nbItem == 0) {
+    if(lowLevelAddCount <= 20) {
+      ::printf("\n[HashTable::Add(h=%llu)] First item in bucket, adding without check",
+               (unsigned long long)h);
+    }
     E[h].items[0] = e;
     E[h].nbItem = 1;
     return ADD_OK;
@@ -274,13 +305,36 @@ int HashTable::Add(uint64_t h,ENTRY* e) {
   // Search insertion position
   int st,ed,mi;
   st = 0; ed = E[h].nbItem - 1;
+
+  if(lowLevelAddCount <= 20) {
+    ::printf("\n[HashTable::Add(h=%llu)] Searching through %d items in bucket",
+             (unsigned long long)h, E[h].nbItem);
+  }
+
   while(st <= ed) {
     mi = (st + ed) / 2;
     int comp = compare(&e->x,&GET(h,mi)->x);
+
+    if(lowLevelAddCount <= 20) {
+      ::printf("\n[HashTable::Add(h=%llu)] Compare with item %d: comp=%d",
+               (unsigned long long)h, mi, comp);
+    }
+
     if(comp<0) {
       ed = mi - 1;
     } else if (comp==0) {
       ENTRY *ent = GET(h,mi);
+
+      ::printf("\n[HashTable] *** MATCH FOUND *** Same X coordinate!");
+      ::printf("\n[HashTable]   Existing entry: type=%u (%s), x=%016llX%016llX...",
+               ent->kType, ent->kType == 0 ? "TAME" : "WILD",
+               (unsigned long long)ent->x.i64[3],
+               (unsigned long long)ent->x.i64[2]);
+      ::printf("\n[HashTable]   New entry:      type=%u (%s), x=%016llX%016llX...",
+               e->kType, e->kType == 0 ? "TAME" : "WILD",
+               (unsigned long long)e->x.i64[3],
+               (unsigned long long)e->x.i64[2]);
+
       uint64_t d10 = e->d.i64[0];
       uint64_t d11 = e->d.i64[1];
       uint64_t d12 = e->d.i64[2];
@@ -289,15 +343,26 @@ int HashTable::Add(uint64_t h,ENTRY* e) {
       uint64_t d21 = ent->d.i64[1];
       uint64_t d22 = ent->d.i64[2];
       uint64_t d23 = ent->d.i64[3];
+
+      ::printf("\n[HashTable]   Existing dist:  %016llX%016llX%016llX%016llX",
+               (unsigned long long)d23, (unsigned long long)d22,
+               (unsigned long long)d21, (unsigned long long)d20);
+      ::printf("\n[HashTable]   New dist:       %016llX%016llX%016llX%016llX",
+               (unsigned long long)d13, (unsigned long long)d12,
+               (unsigned long long)d11, (unsigned long long)d10);
+
       if (d10 == d20 && d11 == d21 && d12 == d22 && d13 == d23) {
 	// Same point added twice or collision in the same herd!
-	::printf("\n[HashTable] Duplicate DP detected (same x and d)\n");
+	::printf("\n[HashTable] -> Same distance = DUPLICATE (same herd collision)\n");
 	return ADD_DUPLICATE;
       }
+
       // Collision detected between different herds
-      ::printf("\n[HashTable] Collision detected! Existing type=%u (%s), New type=%u (%s)\n",
+      ::printf("\n[HashTable] -> Different distance = COLLISION (cross-herd)!");
+      ::printf("\n[HashTable] -> Types: Existing=%u (%s), New=%u (%s)\n",
                ent->kType, ent->kType == 0 ? "TAME" : "WILD",
                e->kType, e->kType == 0 ? "TAME" : "WILD");
+
       kType = ent->kType;
       CalcDist(&(ent->d), &kDist);
       return ADD_COLLISION;
@@ -305,6 +370,11 @@ int HashTable::Add(uint64_t h,ENTRY* e) {
     } else {
       st = mi + 1;
     }
+  }
+
+  if(lowLevelAddCount <= 20) {
+    ::printf("\n[HashTable::Add(h=%llu)] No match found, inserting at position",
+             (unsigned long long)h);
   }
 
   ADD_ENTRY(e);
