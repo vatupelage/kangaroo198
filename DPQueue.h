@@ -113,16 +113,19 @@ public:
 
   // Pop batch of DPs (blocking for network thread)
   // Returns up to maxCount DPs, or waits if queue is empty
+  // After getting first DP, waits briefly (batching_delay_ms) to collect more DPs
   bool pop_batch(std::vector<ITEM>& dps, std::vector<uint32_t>& threadIds,
                  std::vector<uint32_t>& gpuIds, uint32_t maxCount, double timeout_sec = 1.0) {
     dps.clear();
     threadIds.clear();
     gpuIds.clear();
 
+    const int batching_delay_ms = 50;  // Wait 50ms for more DPs after first one
+
 #ifdef WIN64
     WaitForSingleObject(mutex, INFINITE);
 
-    // Wait for data or shutdown
+    // Wait for first DP or shutdown
     while (queue.empty() && !shutdown) {
       ReleaseMutex(mutex);
       DWORD result = WaitForSingleObject(notEmpty, (DWORD)(timeout_sec * 1000));
@@ -139,7 +142,7 @@ public:
       return false;
     }
 
-    // Pop up to maxCount items
+    // Got first DP - collect all available DPs
     while (!queue.empty() && dps.size() < maxCount) {
       DPITEM item = queue.front();
       queue.pop();
@@ -149,11 +152,38 @@ public:
       totalPopped++;
     }
 
+    // If batch not full yet, wait briefly for more DPs to arrive (efficient batching)
+    while (dps.size() < maxCount && !shutdown) {
+      ReleaseMutex(mutex);
+      DWORD result = WaitForSingleObject(notEmpty, batching_delay_ms);
+      WaitForSingleObject(mutex, INFINITE);
+
+      if (result == WAIT_TIMEOUT) {
+        // No more DPs arrived in batching window, send what we have
+        break;
+      }
+
+      // Collect newly arrived DPs
+      while (!queue.empty() && dps.size() < maxCount) {
+        DPITEM item = queue.front();
+        queue.pop();
+        dps.push_back(item.dp);
+        threadIds.push_back(item.threadId);
+        gpuIds.push_back(item.gpuId);
+        totalPopped++;
+      }
+
+      // If batch is full, stop waiting
+      if (dps.size() >= maxCount) {
+        break;
+      }
+    }
+
     ReleaseMutex(mutex);
 #else
     pthread_mutex_lock(&mutex);
 
-    // Wait for data or shutdown
+    // Calculate initial deadline for first DP
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     ts.tv_sec += (time_t)timeout_sec;
@@ -163,6 +193,7 @@ public:
       ts.tv_nsec -= 1000000000L;
     }
 
+    // Wait for first DP or shutdown
     while (queue.empty() && !shutdown) {
       int result = pthread_cond_timedwait(&notEmpty, &mutex, &ts);
       if (result == ETIMEDOUT) {
@@ -176,7 +207,7 @@ public:
       return false;
     }
 
-    // Pop up to maxCount items
+    // Got first DP - collect all available DPs
     while (!queue.empty() && dps.size() < maxCount) {
       DPITEM item = queue.front();
       queue.pop();
@@ -184,6 +215,40 @@ public:
       threadIds.push_back(item.threadId);
       gpuIds.push_back(item.gpuId);
       totalPopped++;
+    }
+
+    // If batch not full yet, wait briefly for more DPs to arrive (efficient batching)
+    while (dps.size() < maxCount && !shutdown) {
+      // Set short timeout for batching (50ms)
+      struct timespec ts_batch;
+      clock_gettime(CLOCK_REALTIME, &ts_batch);
+      ts_batch.tv_nsec += batching_delay_ms * 1000000L;
+      if (ts_batch.tv_nsec >= 1000000000L) {
+        ts_batch.tv_sec += 1;
+        ts_batch.tv_nsec -= 1000000000L;
+      }
+
+      int result = pthread_cond_timedwait(&notEmpty, &mutex, &ts_batch);
+
+      if (result == ETIMEDOUT) {
+        // No more DPs arrived in batching window, send what we have
+        break;
+      }
+
+      // Collect newly arrived DPs
+      while (!queue.empty() && dps.size() < maxCount) {
+        DPITEM item = queue.front();
+        queue.pop();
+        dps.push_back(item.dp);
+        threadIds.push_back(item.threadId);
+        gpuIds.push_back(item.gpuId);
+        totalPopped++;
+      }
+
+      // If batch is full, stop waiting
+      if (dps.size() >= maxCount) {
+        break;
+      }
     }
 
     pthread_mutex_unlock(&mutex);
