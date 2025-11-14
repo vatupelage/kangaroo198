@@ -320,6 +320,14 @@ int HashTable::Add(uint64_t h,ENTRY* e) {
                (unsigned long long)h, mi, comp);
     }
 
+    // ALWAYS log when comp==0 (potential collision)
+    if(comp == 0) {
+      ::printf("\n[HashTable ALERT] Binary search found comp==0 at bucket %llu, item %d",
+               (unsigned long long)h, mi);
+      ::printf("\n[HashTable ALERT] This should trigger collision detection!");
+      ::fflush(stdout);
+    }
+
     if(comp<0) {
       ed = mi - 1;
     } else if (comp==0) {
