@@ -191,11 +191,38 @@ void Kangaroo::ProcessServer() {
     UNLOCK(ghMutex);
 
     // Add to hashTable
+    static uint64_t totalDPsProcessed = 0;
+    static uint64_t tameDPs = 0;
+    static uint64_t wildDPs = 0;
+
     for(int i = 0; i<(int)localCache.size() && !endOfSearch; i++) {
       DP_CACHE dp = localCache[i];
       for(int j = 0; j<(int)dp.nbDP && !endOfSearch; j++) {
-        if(!AddToTable(&dp.dp[j].x,&dp.dp[j].d,dp.dp[j].kIdx % 2)) {
+        uint32_t kType = dp.dp[j].kIdx % 2;
+        totalDPsProcessed++;
+
+        // Count TAME vs WILD DPs
+        if(kType == 0) {
+          tameDPs++;
+        } else {
+          wildDPs++;
+        }
+
+        // Debug: Log first few DPs and periodically
+        if(totalDPsProcessed <= 10 || totalDPsProcessed % 100 == 0) {
+          ::printf("\n[Server DEBUG] DP #%llu: kIdx=%u, kType=%u (%s)",
+                   (unsigned long long)totalDPsProcessed,
+                   dp.dp[j].kIdx,
+                   kType,
+                   kType == 0 ? "TAME" : "WILD");
+          ::printf(" | Stats: TAME=%llu, WILD=%llu",
+                   (unsigned long long)tameDPs,
+                   (unsigned long long)wildDPs);
+        }
+
+        if(!AddToTable(&dp.dp[j].x,&dp.dp[j].d,kType)) {
           // Collision inside the same herd
+          ::printf("\n[Server] Same-herd collision detected (type=%u)\n", kType);
           collisionInSameHerd++;
         }
       }

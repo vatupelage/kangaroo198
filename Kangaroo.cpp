@@ -310,13 +310,19 @@ bool  Kangaroo::CheckKey(Int d1,Int d2,uint8_t type) {
 
 bool Kangaroo::CollisionCheck(Int* d1,uint32_t type1,Int* d2,uint32_t type2) {
 
+  ::printf("\n[CollisionCheck] Checking collision: type1=%u (%s), type2=%u (%s)",
+           type1, type1 == 0 ? "TAME" : "WILD",
+           type2, type2 == 0 ? "TAME" : "WILD");
 
   if(type1 == type2) {
 
     // Collision inside the same herd
+    ::printf(" -> Same herd collision (both %s), rejecting\n", type1 == 0 ? "TAME" : "WILD");
     return false;
 
   } else {
+
+    ::printf(" -> Different herd collision (TAME vs WILD), checking key...\n");
 
     Int Td;
     Int Wd;
@@ -349,6 +355,8 @@ bool Kangaroo::CollisionCheck(Int* d1,uint32_t type1,Int* d2,uint32_t type2) {
       }
       return false;
 
+    } else {
+      ::printf("[CollisionCheck] KEY FOUND!\n");
     }
 
   }
